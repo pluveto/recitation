@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文本挖空练习</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            margin-bottom: 10px;
+        }
+        input[type="number"] {
+            width: 60px;
+        }
+        button {
+            margin: 5px;
+        }
+        .blank {
+            display: inline-block;
+            min-width: 50px;
+            margin: 0 5px;
+        }
+        .blank input {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .correct { color: green; }
+        .partially-correct { color: orange; }
+        .incorrect { color: red; }
+        .current { background-color: lightyellow; }
+        .paragraph { margin-bottom: 20px; }
+        #percentageButtons { margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>文本挖空练习</h1>
+    <textarea id="originalText" placeholder="请输入原文"></textarea>
+    <br>
+    挖空比例（%）：<input type="number" id="blankPercentage" min="1" max="100" value="20">
+    <button onclick="adjustPercentage(-10)">-10%</button>
+    <button onclick="adjustPercentage(10)">+10%</button>
+    <div id="percentageButtons">
+        <button onclick="setPercentage(10)">10%</button>
+        <button onclick="setPercentage(30)">30%</button>
+        <button onclick="setPercentage(50)">50%</button>
+        <button onclick="setPercentage(70)">70%</button>
+        <button onclick="setPercentage(100)">100%</button>
+    </div>
+    <button onclick="generateBlanks()">生成挖空文章</button>
+    <div id="result"></div>
+
+    <script>
+        let undoStack = [];
+        let currentState = {};
+        let randomSeed = Date.now();
+
+        function saveState() {
+            const blanks = document.querySelectorAll('.blank input');
+            const state = Array.from(blanks).map(input => input.value);
+            undoStack.push(state);
+            currentState = state;
+            localStorage.setItem('blankState', JSON.stringify(state));
+            localStorage.setItem('originalText', document.getElementById('originalText').value);
+            localStorage.setItem('blankPercentage', document.getElementById('blankPercentage').value);
+            localStorage.setItem('randomSeed', randomSeed);
+        }
+
+        function loadState() {
+            const savedState = localStorage.getItem('blankState');
+            const savedText = localStorage.getItem('originalText');
+            const savedPercentage = localStorage.getItem('blankPercentage');
+            const savedSeed = localStorage.getItem('randomSeed');
+
+            if (savedText) document.getElementById('originalText').value = savedText;
+            if (savedPercentage) document.getElementById('blankPercentage').value = savedPercentage;
+            if (savedSeed) randomSeed = parseInt(savedSeed);
+
+            if (savedState) {
+                generateBlanks();
+                const state = JSON.parse(savedState);
+                const blanks = document.querySelectorAll('.blank input');
+                blanks.forEach((input, index) => {
+                    input.value = state[index] || '';
+                    checkAnswer(input);
+                });
+            }
+        }
+
+        function generateBlanks() {
+            const originalText = document.getElementById('originalText').value;
+            const blankPercentage = document.getElementById('blankPercentage').value / 100;
+            const paragraphs = originalText.split(/\n{2,}/);
+            let blankedText = [];
+            let blankCount = 0;
+
+            // 重置随机数生成器
+            Math.seedrandom(randomSeed);
+
+            paragraphs.forEach((paragraph, paragraphIndex) => {
+                const words = paragraph.split(/\s+/);
+                const totalWords = words.length;
+                const blanksInParagraph = Math.max(1, Math.floor(totalWords * blankPercentage));
+                const blankedWords = [];
+
+                const wordIndices = Array.from({length: totalWords}, (_, i) => i);
+
+                for (let i = 0; i < blanksInParagraph; i++) {
+                    if (wordIndices.length === 0) break;
+                    const randomIndex = Math.floor(Math.random() * wordIndices.length);
+                    const wordIndex = wordIndices.splice(randomIndex, 1)[0];
+                    blankedWords.push(wordIndex);
+                }
+
+                let paragraphContent = words.map((word, index) => {
+                    if (blankedWords.includes(index)) {
+                        return createBlankSpan(word, blankCount++);
+                    }
+                    return word;
+                }).join(' ');
+
+                blankedText.push(`<div class="paragraph">${paragraphContent}</div>`);
+            });
+
+            document.getElementById('result').innerHTML = blankedText.join('');
+            setupKeyboardNavigation();
+            undoStack = [];
+            saveState();
+        }
+
+        function createBlankSpan(word, index) {
+            return `<span class="blank" data-word="${word}" data-index="${index}"><input type="text" oninput="checkAnswer(this)" onkeydown="handleKeyDown(event, this)" ondblclick="fillAnswer(this)"></span>`;
+        }
+
+        function checkAnswer(input) {
+            const correct = input.parentElement.dataset.word;
+            const userInput = input.value.trim().toLowerCase();
+            const correctLower = correct.toLowerCase();
+
+            if (userInput === correctLower) {
+                input.className = 'correct';
+                moveToNextBlank(input);
+            } else if (correctLower.startsWith(userInput) && userInput.length > 0) {
+                input.className = 'partially-correct';
+            } else if (userInput === '') {
+                input.className = '';
+            } else {
+                input.className = 'incorrect';
+            }
+            saveState();
+        }
+
+        function fillAnswer(input) {
+            const correct = input.parentElement.dataset.word;
+            input.value = correct;
+            input.className = 'correct';
+            moveToNextBlank(input);
+            saveState();
+        }
+
+        function handleKeyDown(event, input) {
+            if (event.key === '.') {
+                event.preventDefault();
+                fillAnswer(input);
+            } else if (event.key === 'Backspace' && input.value === '') {
+                event.preventDefault();
+                moveToPreviousBlank(input);
+            } else if (event.ctrlKey && event.key === 'z') {
+                event.preventDefault();
+                undo();
+            }
+        }
+
+        function moveToNextBlank(currentInput) {
+            const blanks = Array.from(document.querySelectorAll('.blank input'));
+            const currentIndex = blanks.indexOf(currentInput);
+            if (currentIndex < blanks.length - 1) {
+                blanks[currentIndex + 1].focus();
+            }
+        }
+
+        function moveToPreviousBlank(currentInput) {
+            const blanks = Array.from(document.querySelectorAll('.blank input'));
+            const currentIndex = blanks.indexOf(currentInput);
+            if (currentIndex > 0) {
+                blanks[currentIndex - 1].focus();
+                blanks[currentIndex - 1].setSelectionRange(blanks[currentIndex - 1].value.length, blanks[currentIndex - 1].value.length);
+            }
+        }
+
+        function undo() {
+            if (undoStack.length > 1) {
+                undoStack.pop();
+                const previousState = undoStack[undoStack.length - 1];
+                const blanks = document.querySelectorAll('.blank input');
+                blanks.forEach((input, index) => {
+                    input.value = previousState[index] || '';
+                    checkAnswer(input);
+                });
+            }
+        }
+
+        function setupKeyboardNavigation() {
+            const blanks = document.querySelectorAll('.blank input');
+            blanks.forEach((input, index) => {
+                input.addEventListener('keydown', function(e) {
+                    if (e.key === 'ArrowLeft' && index > 0) {
+                        e.preventDefault();
+                        blanks[index - 1].focus();
+                    } else if (e.key === 'ArrowRight' && index < blanks.length - 1) {
+                        e.preventDefault();
+                        blanks[index + 1].focus();
+                    }
+                });
+
+                input.addEventListener('focus', function() {
+                    blanks.forEach(b => b.parentElement.classList.remove('current'));
+                    this.parentElement.classList.add('current');
+                });
+            });
+
+            if (blanks.length > 0) {
+                blanks[0].focus();
+            }
+        }
+
+        function adjustPercentage(delta) {
+            const input = document.getElementById('blankPercentage');
+            let newValue = parseInt(input.value) + delta;
+            newValue = Math.max(1, Math.min(100, newValue));
+            input.value = newValue;
+            generateBlanks();
+        }
+
+        function setPercentage(value) {
+            document.getElementById('blankPercentage').value = value;
+            generateBlanks();
+        }
+
+        // 使用seedrandom库来确保随机数生成的一致性
+        (function(f,a,c){var s,l=256,p="random",d=c.pow(l,6),g=c.pow(2,52),y=2*g,h=l-1;function n(n,t,r){function e(){for(var n=u.g(6),t=d,r=0;n<g;)n=(n+r)*l,t*=l,r=u.g(1);for(;y<=n;)n/=2,t/=2,r>>>=1;return(n+r)/t}var o=[],i=j(function n(t,r){var e,o=[],i=typeof t;if(r&&"object"==i)for(e in t)try{o.push(n(t[e],r-1))}catch(n){}return o.length?o:"string"==i?t:t+"\0"}((t=1==t?{entropy:!0}:t||{}).entropy?[n,S(a)]:null==n?function(){try{var n;return s&&(n=s.randomBytes)?n=n(l):(n=new Uint8Array(l),(f.crypto||f.msCrypto).getRandomValues(n)),S(n)}catch(n){var t=f.navigator,r=t&&t.plugins;return[+new Date,f,r,f.screen,S(a)]}}():n,3),o),u=new m(o);return e.int32=function(){return 0|u.g(4)},e.quick=function(){return u.g(4)/4294967296},e.double=e,j(S(u.S),a),(t.pass||r||function(n,t,r,e){return e&&(e.S&&v(e,u),n.state=function(){return v(u,{})}),r?(c[p]=n,t):n})(e,i,"global"in t?t.global:this==c,t.state)}function m(n){var t,r=n.length,u=this,e=0,o=u.i=u.j=0,i=u.S=[];for(r||(n=[r++]);e<l;)i[e]=e++;for(e=0;e<l;e++)i[e]=i[o=h&o+n[e%r]+(t=i[e])],i[o]=t;(u.g=function(n){for(var t,r=0,e=u.i,o=u.j,i=u.S;n--;)t=i[e=h&e+1],r=r*l+i[h&(i[e]=i[o=h&o+t])+(i[o]=t)];return u.i=e,u.j=o,r})(l)}function v(n,t){return t.i=n.i,t.j=n.j,t.S=n.S.slice(),t}function j(n,t){for(var r,e=n+"",o=0;o<e.length;)t[h&o]=h&(r^=19*t[h&o])+e.charCodeAt(o++);return S(t)}function S(n){return String.fromCharCode.apply(0,n)}if(j(c.random(),a),"object"==typeof module&&module.exports){module.exports=n;try{s=require("crypto")}catch(n){}}else"function"==typeof define&&define.amd?define(function(){return n}):c["seed"+p]=n}("undefined"!=typeof self?self:this,[],Math));
+
+        window.onload = loadState;
+    </script>
+</body>
+</html>

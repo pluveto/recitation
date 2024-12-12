@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文本编辑与预览</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <style>
+        body {
+            max-width: 768px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+
+        .hidden-word {
+            display: inline-block;
+            background-color: lightgray;
+            color: transparent;
+            margin: 2px 0;
+            padding: 2px;
+        }
+
+        .hidden-word.revealed {
+            color: black;
+            background-color: transparent;
+        }
+
+        .hidden-word.current {
+            color: black;
+            background-color: yellow;
+        }
+
+        .hidden-word.past:hover {
+            color: black;
+        }
+
+        p {
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div v-if="editMode">
+            <textarea v-model="text" rows="10" cols="50" placeholder="输入你的文本..."></textarea>
+            <button @click="switchToPreview">提交</button>
+        </div>
+
+        <div v-else>
+            <div>
+                <label>
+                    <input type="checkbox" v-model="focusMode"> 启用专注模式
+                </label>
+                <label>
+                    <input type="checkbox" v-model="speakWord"> 朗读当前词语
+                </label>
+            </div>
+            <div id="preview-text">
+                <p v-for="(paragraph, pIndex) in paragraphs" :key="pIndex">
+                    <span v-for="(word, index) in paragraph" :key="index" :class="getWordClass(index, pIndex)">
+                        {{ word }}
+                    </span>
+                </p>
+            </div>
+            <button @click="switchToEdit">返回编辑模式</button>
+        </div>
+    </div>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                text: '',
+                paragraphs: [],
+                currentWordIndex: -1,
+                currentParagraphIndex: 0,
+                focusMode: false,
+                editMode: true,
+                speakWord: true,
+                sentenceBoundaries: [],
+                halfSentenceBoundaries: []
+            },
+            methods: {
+                switchToPreview() {
+                    this.paragraphs = this.text.split('\n').filter(p => p.trim().length > 0).map(paragraph => {
+                        return paragraph.split(/\s+/).filter(e => e.trim().length > 0);
+                    });
+
+                    this.sentenceBoundaries = [];
+                    this.halfSentenceBoundaries = [];
+                    this.currentWordIndex = -1;
+                    this.currentParagraphIndex = 0;
+
+                    this.paragraphs.forEach((paragraph, pIndex) => {
+                        paragraph.forEach((word, index) => {
+                            if (/[.!?]/.test(word)) {
+                                this.sentenceBoundaries.push({ pIndex, index });
+                            }
+                            if (/[.!?,;]/.test(word)) {
+                                this.halfSentenceBoundaries.push({ pIndex, index });
+                            }
+                        });
+                    });
+
+                    console.log(this.halfSentenceBoundaries);
+
+                    this.editMode = false;
+                    this.saveState();
+                },
+                switchToEdit() {
+                    this.editMode = true;
+                    this.saveState();
+                },
+                revealWord() {
+                    if (this.currentWordIndex < this.paragraphs[this.currentParagraphIndex].length - 1) {
+                        this.currentWordIndex++;
+                    } else if (this.currentParagraphIndex < this.paragraphs.length - 1) {
+                        this.currentParagraphIndex++;
+                        this.currentWordIndex = -1;
+                    }
+                    this.speakCurrentWord();
+                    this.saveState();
+                },
+                hideWord() {
+                    if (this.currentWordIndex >= 0) {
+                        this.currentWordIndex--;
+                    } else if (this.currentParagraphIndex > 0) {
+                        this.currentParagraphIndex--;
+                        this.currentWordIndex = this.paragraphs[this.currentParagraphIndex].length - 1;
+                    }
+                    this.speakCurrentWord();
+                    this.saveState();
+                },
+                revealSentence() {
+                    const boundary = this.sentenceBoundaries.find(b =>
+                        b.pIndex === this.currentParagraphIndex && b.index > this.currentWordIndex);
+
+                    if (boundary) {
+                        this.currentWordIndex = boundary.index;
+                    } else {
+                        this.currentWordIndex = this.paragraphs[this.currentParagraphIndex].length;
+                    }
+                    this.speakCurrentWord();
+                    this.saveState();
+                },
+                hideSentence() {
+                    const boundary = [...this.sentenceBoundaries].reverse().find(b =>
+                        b.pIndex === this.currentParagraphIndex && b.index < this.currentWordIndex - 1);
+
+                    if (boundary) {
+                        this.currentWordIndex = boundary.index;
+                    } else {
+                        this.currentWordIndex = -1;
+                    }
+                    this.speakCurrentWord();
+                    this.saveState();
+                },
+                revealHalfSentence() {
+                    const boundary = this.halfSentenceBoundaries.find(b =>
+                        b.pIndex === this.currentParagraphIndex && b.index >= this.currentWordIndex);
+
+                    if (boundary) {
+                        this.currentWordIndex = boundary.index;
+                    } else {
+                        this.revealSentence();
+                    }
+                    this.speakCurrentWord();
+                    this.saveState();
+                },
+                hideHalfSentence() {
+                    const boundary = [...this.halfSentenceBoundaries].reverse().find(b =>
+                        b.pIndex === this.currentParagraphIndex && b.index < this.currentWordIndex - 1);
+
+                    if (boundary) {
+                        this.currentWordIndex = boundary.index;
+                    } else {
+                        this.hideSentence();
+                    }
+                    this.speakCurrentWord();
+                    this.saveState();
+                },
+                getWordClass(index, pIndex) {
+                    if (this.focusMode) {
+                        if (pIndex < this.currentParagraphIndex || (pIndex === this.currentParagraphIndex && index < this.currentWordIndex)) {
+                            return 'hidden-word past';
+                        } else if (pIndex === this.currentParagraphIndex && index === this.currentWordIndex) {
+                            return 'hidden-word current';
+                        } else {
+                            return 'hidden-word';
+                        }
+                    } else {
+                        if (pIndex < this.currentParagraphIndex) {
+                            return 'hidden-word revealed';
+                        } else if (pIndex === this.currentParagraphIndex && index <= this.currentWordIndex) {
+                            return 'hidden-word revealed';
+                        } else {
+                            return 'hidden-word';
+                        }
+                    }
+                },
+                speakCurrentWord() {
+                    if (!this.speakWord) {
+                        return;
+                    }
+
+                    const currentWord = this.paragraphs[this.currentParagraphIndex][this.currentWordIndex];
+                    const utterance = new SpeechSynthesisUtterance(currentWord);
+                    utterance.lang = 'en-UK';
+                    utterance.rate = 2;
+                    window.speechSynthesis.speak(utterance);
+                },
+                saveState() {
+                    const state = {
+                        text: this.text,
+                        currentWordIndex: this.currentWordIndex,
+                        currentParagraphIndex: this.currentParagraphIndex,
+                        focusMode: this.focusMode,
+                        editMode: this.editMode,
+                        speakWord: this.speakWord
+                    };
+                    localStorage.setItem('appState', JSON.stringify(state));
+                },
+                loadState() {
+                    const state = JSON.parse(localStorage.getItem('appState'));
+                    if (state) {
+                        this.text = state.text;
+                        this.currentWordIndex = state.currentWordIndex;
+                        this.currentParagraphIndex = state.currentParagraphIndex;
+                        this.focusMode = state.focusMode;
+                        this.editMode = state.editMode;
+                        this.speakWord = state.speakWord;
+                    }
+                }
+            },
+            mounted() {
+                this.loadState();
+
+                document.addEventListener('keydown', (event) => {
+                    if (event.key === 'ArrowRight') {
+                        this.revealWord();
+                    } else if (event.key === 'ArrowLeft') {
+                        this.hideWord();
+                    } else if (event.key === 'ArrowDown' && !event.shiftKey) {
+                        this.revealSentence();
+                    } else if (event.key === 'ArrowUp' && !event.shiftKey) {
+                        this.hideSentence();
+                    } else if (event.key === 'ArrowDown' && event.shiftKey) {
+                        this.revealHalfSentence();
+                    } else if (event.key === 'ArrowUp' && event.shiftKey) {
+                        this.hideHalfSentence();
+                    }
+                });
+
+            }
+        });
+    </script>
+</body>
+
+</html>
